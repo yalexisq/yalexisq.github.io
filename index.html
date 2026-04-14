@@ -507,7 +507,7 @@ async function generate() {
         ws[ref].s = headerStyle;
       });
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      nextRow = range.e.r + 2;
+      nextRow = range.e.r + 1;
     } else {
       wb = XLSX.utils.book_new();
       ws = {};
