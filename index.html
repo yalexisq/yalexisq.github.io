@@ -19,8 +19,8 @@
     --text: #f0ede6;
     --text2: #8a8780;
     --text3: #555;
-    --accent: #e8c547;
-    --accent2: #c9a82e;
+    --accent: #e87878;
+    --accent2: #d45f5f;
     --success: #4caf82;
     --danger: #e05a5a;
     --font-display: 'Sora', sans-serif;
@@ -227,7 +227,15 @@
   }
   footer span { margin-left: auto; }
 
-  /* SPINNER */
+  .tab-btn { display: inline-block; padding: 8px 16px; font-size: 12px; font-family: var(--font-mono); color: var(--text2); cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .pdf-file-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; font-family: var(--font-mono); }
+  .pdf-file-item .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
+  .pdf-file-item .status-dot.ok { background: var(--success); }
+  .pdf-file-item .status-dot.loading { background: var(--accent); animation: pulse 1s infinite; }
+  .pdf-file-item .status-dot.err { background: var(--danger); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
   .spin { display: inline-block; animation: rotate 0.7s linear infinite; }
   @keyframes rotate { to { transform: rotate(360deg); } }
 
@@ -252,21 +260,21 @@
 <main>
   <div class="hero">
     <h2>Turn estimates into<br><strong>scorecard rows</strong> instantly.</h2>
-    <p>Upload an Estimate Information PDF and optionally an existing scorecard to append a new row — no copy-pasting required.</p>
+    <p>Upload one or more Estimate PDFs and optionally an existing scorecard — each PDF becomes a new row, appended in order.</p>
   </div>
 
   <!-- Step 1 -->
   <div class="step-card" id="card-pdf">
     <div class="step-num">Step 01 — Required</div>
-    <h3>Estimate PDF</h3>
-    <p>Upload the Estimate Information PDF exported from your estimating system.</p>
+    <h3>Estimate PDFs</h3>
+    <p>Upload one or more Estimate Information PDFs. Each will become its own row in the scorecard.</p>
     <div class="drop-zone" id="zone-pdf" onclick="document.getElementById('inp-pdf').click()">
       <span class="drop-icon">📄</span>
-      <div class="drop-main">Drop PDF here or click to browse</div>
-      <div class="drop-sub">Estimate Information format</div>
-      <div class="drop-file" id="pdf-name" style="display:none"></div>
+      <div class="drop-main">Drop PDFs here or click to browse</div>
+      <div class="drop-sub">Multiple files supported</div>
     </div>
-    <input type="file" id="inp-pdf" accept=".pdf">
+    <div id="pdf-list" style="margin-top:0.75rem; display:none;"></div>
+    <input type="file" id="inp-pdf" accept=".pdf" multiple>
   </div>
 
   <!-- Step 2 -->
@@ -289,6 +297,7 @@
       <h4>Extracted Fields — Preview</h4>
       <span class="badge badge-ok" id="field-count"></span>
     </div>
+    <div id="preview-tabs" style="display:none; border-bottom: 1px solid var(--border); overflow-x:auto; white-space:nowrap;"></div>
     <div class="fields-grid" id="fields-grid"></div>
   </div>
 
@@ -313,34 +322,73 @@
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let pdfFile = null, xlsxFile = null, extracted = null;
+let pdfFiles = [], xlsxFile = null, extractedAll = [], activeTab = 0;
 
 /* ── drag/drop ── */
-['pdf','xlsx'].forEach(type => {
-  const zone = document.getElementById('zone-' + type);
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault(); zone.classList.remove('drag-over');
-    const f = e.dataTransfer.files[0];
-    if (f) (type === 'pdf' ? handlePdf : handleXlsx)(f);
-  });
+const zonePdf = document.getElementById('zone-pdf');
+zonePdf.addEventListener('dragover', e => { e.preventDefault(); zonePdf.classList.add('drag-over'); });
+zonePdf.addEventListener('dragleave', () => zonePdf.classList.remove('drag-over'));
+zonePdf.addEventListener('drop', e => {
+  e.preventDefault(); zonePdf.classList.remove('drag-over');
+  const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (files.length) handlePdfs(files);
 });
 
-document.getElementById('inp-pdf').addEventListener('change', e => { if (e.target.files[0]) handlePdf(e.target.files[0]); });
+const zoneXlsx = document.getElementById('zone-xlsx');
+zoneXlsx.addEventListener('dragover', e => { e.preventDefault(); zoneXlsx.classList.add('drag-over'); });
+zoneXlsx.addEventListener('dragleave', () => zoneXlsx.classList.remove('drag-over'));
+zoneXlsx.addEventListener('drop', e => {
+  e.preventDefault(); zoneXlsx.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleXlsx(f);
+});
+
+document.getElementById('inp-pdf').addEventListener('change', e => {
+  const files = [...e.target.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (files.length) handlePdfs(files);
+});
 document.getElementById('inp-xlsx').addEventListener('change', e => { if (e.target.files[0]) handleXlsx(e.target.files[0]); });
 
-function handlePdf(f) {
-  if (!f.name.toLowerCase().endsWith('.pdf')) { setStatus('Please upload a .pdf file', 'err'); return; }
-  pdfFile = f;
-  const zone = document.getElementById('zone-pdf');
-  const card = document.getElementById('card-pdf');
-  zone.classList.add('has-file');
-  const nm = document.getElementById('pdf-name');
-  nm.textContent = '✓ ' + f.name; nm.style.display = '';
-  card.classList.add('active');
-  setStatus('Reading PDF…', 'info');
-  parsePdf(f);
+function handlePdfs(files) {
+  pdfFiles = files;
+  extractedAll = new Array(files.length).fill(null);
+  activeTab = 0;
+
+  zonePdf.classList.add('has-file');
+  document.getElementById('card-pdf').classList.add('active');
+  document.getElementById('btn-generate').disabled = true;
+  document.getElementById('btn-clear').style.display = '';
+
+  // Show file list
+  const list = document.getElementById('pdf-list');
+  list.style.display = '';
+  list.innerHTML = files.map((f, i) =>
+    `<div class="pdf-file-item" id="file-item-${i}">
+      <span class="status-dot loading" id="dot-${i}"></span>
+      <span style="color:var(--text2)">${f.name}</span>
+    </div>`
+  ).join('');
+
+  setStatus(`Parsing ${files.length} PDF${files.length > 1 ? 's' : ''}…`, 'info');
+
+  // Parse all sequentially
+  (async () => {
+    for (let i = 0; i < files.length; i++) {
+      try {
+        extractedAll[i] = await parsePdf(files[i]);
+        document.getElementById('dot-' + i).className = 'status-dot ok';
+      } catch(e) {
+        extractedAll[i] = null;
+        document.getElementById('dot-' + i).className = 'status-dot err';
+      }
+    }
+    const ok = extractedAll.filter(Boolean).length;
+    document.getElementById('card-pdf').classList.remove('active');
+    document.getElementById('card-pdf').classList.add('done');
+    document.getElementById('btn-generate').disabled = ok === 0;
+    setStatus(`✓ ${ok} of ${files.length} PDF${files.length > 1 ? 's' : ''} parsed successfully`, 'ok');
+    renderTabs();
+  })();
 }
 
 function handleXlsx(f) {
@@ -354,47 +402,28 @@ function handleXlsx(f) {
 }
 
 async function parsePdf(file) {
-  try {
-    const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-    let text = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const tc = await page.getTextContent();
-      // Group items by Y position (rounded), sort each row left-to-right by X,
-      // then join rows top-to-bottom. This matches how pdfplumber sees the document.
-      const byY = {};
-      tc.items.forEach(item => {
-        const y = Math.round(item.transform[5]);
-        if (!byY[y]) byY[y] = [];
-        byY[y].push({ x: item.transform[4], str: item.str });
-      });
-      // PDF Y coords increase upward, so sort descending = top-to-bottom
-      const ys = Object.keys(byY).map(Number).sort((a, b) => b - a);
-      ys.forEach(y => {
-        const row = byY[y].sort((a, b) => a.x - b.x).map(i => i.str).join(' ').trim();
-        if (row) text += row + '\n';
-      });
-    }
-    extracted = extractFields(text);
-    renderPreview(extracted);
-    document.getElementById('card-pdf').classList.remove('active');
-    document.getElementById('card-pdf').classList.add('done');
-    document.getElementById('btn-generate').disabled = false;
-    document.getElementById('btn-clear').style.display = '';
-    const filled = Object.values(extracted).filter(v => v !== '' && v !== null).length;
-    setStatus('PDF parsed — ' + filled + ' of 11 fields extracted', 'ok');
-  } catch(e) {
-    setStatus('Could not parse PDF: ' + e.message, 'err');
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const tc = await page.getTextContent();
+    const byY = {};
+    tc.items.forEach(item => {
+      const y = Math.round(item.transform[5]);
+      if (!byY[y]) byY[y] = [];
+      byY[y].push({ x: item.transform[4], str: item.str });
+    });
+    const ys = Object.keys(byY).map(Number).sort((a, b) => b - a);
+    ys.forEach(y => {
+      const row = byY[y].sort((a, b) => a.x - b.x).map(i => i.str).join(' ').trim();
+      if (row) text += row + '\n';
+    });
   }
+  return extractFields(text);
 }
 
 function extractFields(text) {
-  // Scope each field to the correct section of the document.
-  // The PDF has a two-column header table (y=175-254) where labels and values
-  // share the same Y row — e.g. "Estimator: Polly Yip Phone: 416.874.5900".
-  // We avoid that area entirely by pulling from the clean single-column sections below.
-
   const getBlock = (start, end) => {
     const m = text.match(new RegExp(start + '\\n([\\s\\S]+?)' + end, 'i'));
     return m ? m[1] : '';
@@ -410,149 +439,164 @@ function extractFields(text) {
     return m ? (m[1] || '').trim() : '';
   };
 
-  // CLIENT — "Primary Customer: Metrolinx"
-  const client = field(/^Primary Customer:\s*(.+)/m, projBlock);
-
-  // CONTACT — "Contact: Jose Gomez Sierra"
-  const contact = field(/^Contact:\s*(.+)/m, projBlock);
-
-  // LOCATION + CITY — "Project Address: 5760 Leslie St, North York, ON"
-  const addrM = projBlock.match(/^Project Address:\s*([^,\n]+),\s*([^,\n]+),/im);
-  const location = addrM ? addrM[1].trim() : '';
-  const city     = addrM ? addrM[2].trim() : '';
-
-  // DESCRIPTION — "Project Name: Old Cummer Go Station - Accessible Parking Improvement"
+  const client      = field(/^Primary Customer:\s*(.+)/m, projBlock);
+  const contact     = field(/^Contact:\s*(.+)/m, projBlock);
+  const addrM       = projBlock.match(/^Project Address:\s*([^,\n]+),\s*([^,\n]+),/im);
+  const location    = addrM ? addrM[1].trim() : '';
+  const city        = addrM ? addrM[2].trim() : '';
   const description = field(/^Project Name:\s*(.+)/m, projBlock);
-
-  // CONTRACT $ — "Projected Value: $27,575.87"
-  const valM = projBlock.match(/Projected Value:\s*\$?([\d,]+\.?\d*)/i);
+  const valM        = projBlock.match(/Projected Value:\s*\$?([\d,]+\.?\d*)/i);
   const contractValue = valM ? parseFloat(valM[1].replace(/,/g, '')) : '';
-
-  // ACC MGR — "Bid As: Claudio Sarracini (Account Manager)" → strip the parenthetical
-  const accMgr = field(/^Bid As:\s*([^(\n]+)/m, genBlock).trim();
-
-  // ESTIMATOR / CA — "Estimator: Polly Yip" (from General block, not the header row)
-  const estimator = field(/^Estimator:\s*(.+)/m, genBlock);
-
-  // AWARD DATE — "Status Changed: 4/10/2026 by PY"
-  const awardM = bidBlock.match(/Status Changed:\s*(\d+\/\d+\/\d+)/i);
-  const awardDate = awardM ? awardM[1] : '';
-
-  // EMAIL — "01. Client Email Address: jose.GomezSierra@metrolinx.com"
-  const email = field(/Client Email Address:\s*(\S+)/i, userBlock);
-
-  // PHONE — "Estimator: Polly Yip Phone: 416.874.5900" in header area
-  // Safe to search full text since format is distinct
-  const phoneM = text.match(/Phone:\s*([\d.()\- ]{7,20})/i);
-  const phone = phoneM ? phoneM[1].trim() : '';
+  const accMgr      = field(/^Bid As:\s*([^(\n]+)/m, genBlock).trim();
+  const estimator   = field(/^Estimator:\s*(.+)/m, genBlock);
+  const awardM      = bidBlock.match(/Status Changed:\s*(\d+\/\d+\/\d+)/i);
+  const awardDate   = awardM ? awardM[1] : '';
+  const email       = field(/Client Email Address:\s*(\S+)/i, userBlock);
+  const phoneM      = text.match(/Phone:\s*([\d.()\- ]{7,20})/i);
+  const phone       = phoneM ? phoneM[1].trim() : '';
 
   return { client, contact, location, city, description, contractValue, accMgr, estimator, awardDate, email, phone };
 }
 
 const FIELD_LABELS = {
-  client: 'CLIENT',
-  contact: 'CONTACT',
-  location: 'LOCATION',
-  city: 'CITY',
-  description: 'DESCRIPTION',
-  contractValue: 'CONTRACT $',
-  accMgr: 'ACC MGR',
-  estimator: 'CONTRACT MANAGER (CA)',
-  awardDate: 'AWARD DATE',
-  email: 'CONTACT EMAIL',
-  phone: 'CONTACT PHONE'
+  client: 'CLIENT', contact: 'CONTACT', location: 'LOCATION', city: 'CITY',
+  description: 'DESCRIPTION', contractValue: 'CONTRACT $', accMgr: 'ACC MGR',
+  estimator: 'CONTRACT MANAGER (CA)', awardDate: 'AWARD DATE',
+  email: 'CONTACT EMAIL', phone: 'CONTACT PHONE'
 };
 
-function renderPreview(data) {
-  const grid = document.getElementById('fields-grid');
-  const filled = Object.values(data).filter(v => v !== '' && v !== null).length;
-  document.getElementById('field-count').textContent = filled + ' fields extracted';
-  grid.innerHTML = Object.entries(FIELD_LABELS).map(([k, label]) => {
-    const val = data[k];
-    const isEmpty = val === '' || val === null || val === undefined;
-    const isCurrency = k === 'contractValue';
-    return `<div class="field-item">
-      <div class="field-label">${label}</div>
-      <div class="field-value ${isEmpty ? 'empty' : ''} ${isCurrency && !isEmpty ? 'currency' : ''}">
-        ${isEmpty ? 'not found' : (isCurrency ? Number(val).toLocaleString('en-CA', {minimumFractionDigits:2, maximumFractionDigits:2}) : val)}
-      </div>
-    </div>`;
-  }).join('');
-  document.getElementById('preview-panel').style.display = '';
+function renderTabs() {
+  const tabs = document.getElementById('preview-tabs');
+  const panel = document.getElementById('preview-panel');
+
+  if (pdfFiles.length > 1) {
+    tabs.style.display = '';
+    tabs.innerHTML = pdfFiles.map((f, i) =>
+      `<button class="tab-btn ${i === activeTab ? 'active' : ''}" onclick="switchTab(${i})">${f.name.replace(/\.pdf$/i,'')}</button>`
+    ).join('');
+  } else {
+    tabs.style.display = 'none';
+  }
+
+  const data = extractedAll[activeTab];
+  const filled = data ? Object.values(data).filter(v => v !== '' && v !== null).length : 0;
+  document.getElementById('field-count').textContent =
+    pdfFiles.length > 1 ? `${pdfFiles.length} PDFs · ${filled} fields in view` : `${filled} fields extracted`;
+
+  if (data) {
+    document.getElementById('fields-grid').innerHTML = Object.entries(FIELD_LABELS).map(([k, label]) => {
+      const val = data[k];
+      const isEmpty = val === '' || val === null || val === undefined;
+      const isCurrency = k === 'contractValue';
+      return `<div class="field-item">
+        <div class="field-label">${label}</div>
+        <div class="field-value ${isEmpty ? 'empty' : ''} ${isCurrency && !isEmpty ? 'currency' : ''}">
+          ${isEmpty ? 'not found' : (isCurrency ? Number(val).toLocaleString('en-CA', {minimumFractionDigits:2, maximumFractionDigits:2}) : val)}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  panel.style.display = '';
+}
+
+function switchTab(i) {
+  activeTab = i;
+  renderTabs();
+}
+
+function clearAll() {
+  pdfFiles = []; xlsxFile = null; extractedAll = []; activeTab = 0;
+  document.getElementById('zone-pdf').classList.remove('has-file','drag-over');
+  document.getElementById('zone-xlsx').classList.remove('has-file','drag-over');
+  document.getElementById('card-pdf').classList.remove('active','done');
+  document.getElementById('card-xlsx').classList.remove('active','done');
+  document.getElementById('inp-pdf').value = '';
+  document.getElementById('inp-xlsx').value = '';
+  document.getElementById('xlsx-name').textContent = '';
+  document.getElementById('xlsx-name').style.display = 'none';
+  document.getElementById('pdf-list').style.display = 'none';
+  document.getElementById('pdf-list').innerHTML = '';
+  document.getElementById('preview-panel').style.display = 'none';
+  document.getElementById('preview-tabs').innerHTML = '';
+  document.getElementById('btn-generate').disabled = true;
+  document.getElementById('btn-clear').style.display = 'none';
+  setStatus('', '');
 }
 
 async function generate() {
-  if (!extracted) return;
+  const validEntries = extractedAll.filter(Boolean);
+  if (!validEntries.length) return;
   document.getElementById('btn-generate').disabled = true;
   setStatus('<span class="spin">⟳</span> Building Excel file…', 'info');
 
   try {
-    const headers = ['Job #','CLIENT','CONTACT','LOCATION','CITY','DESCRIPTION','CONTRACT $','ACC MGR','Site Superintendent (PM)','CONTRACT MANAGER (CA)','AWARD DATE','NOTES','Contact E-mail','Contact Phone #'];
+    const headers = ['JOB #','CLIENT','CONTACT','LOCATION','CITY','DESCRIPTION','CONTRACT $','ACC MGR','SITE SUPERINTENDENT (PM)','CONTRACT MANAGER (CA)','AWARD DATE','NOTES','CONTACT E-MAIL','CONTACT PHONE #'];
     let wb, ws, nextRow;
 
-    const headerStyle = {
-      font:  { bold: true, color: { rgb: '000000' } },
-      fill:  { fgColor: { rgb: 'BDD7EE' } },
-      alignment: { horizontal: 'center', vertical: 'center' }
+    const baseHeaderStyle = {
+      font:  { name: 'Calibri', sz: 11, bold: true, italic: true, color: { rgb: '000000' } },
+      fill:  { fgColor: { rgb: 'FFFFFF' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true }
     };
+    const jobNumStyle = {
+      font:  { name: 'Calibri', sz: 11, bold: true, italic: true, color: { rgb: '9C0006' } },
+      fill:  { fgColor: { rgb: 'FFFF00' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true }
+    };
+    const descStyle = {
+      font:  { name: 'Calibri', sz: 11, bold: true, italic: true, color: { rgb: '000000' } },
+      fill:  { fgColor: { rgb: 'FFFF00' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true }
+    };
+    const getHeaderStyle = (i) => i === 0 ? jobNumStyle : i === 5 ? descStyle : baseHeaderStyle;
 
     if (xlsxFile) {
       const buf = await xlsxFile.arrayBuffer();
       wb = XLSX.read(buf, { type: 'array', cellDates: true });
       ws = wb.Sheets[wb.SheetNames[0]];
-      // Find true last non-empty row FIRST before touching anything
       let lastRow = 0;
       Object.keys(ws).forEach(key => {
         if (key[0] === '!') return;
-        try {
-          const r = XLSX.utils.decode_cell(key).r;
-          if (r > lastRow) lastRow = r;
-        } catch(e) {}
+        try { const r = XLSX.utils.decode_cell(key).r; if (r > lastRow) lastRow = r; } catch(e) {}
       });
       nextRow = lastRow + 1;
-      // Now re-apply header styles
       headers.forEach((h, i) => {
         const ref = XLSX.utils.encode_cell({ r: 0, c: i });
         if (!ws[ref]) ws[ref] = { v: h, t: 's' };
-        ws[ref].s = headerStyle;
+        ws[ref].v = h;
+        ws[ref].s = getHeaderStyle(i);
       });
     } else {
       wb = XLSX.utils.book_new();
       ws = {};
       headers.forEach((h, i) => {
-        ws[XLSX.utils.encode_cell({ r: 0, c: i })] = { v: h, t: 's', s: headerStyle };
+        ws[XLSX.utils.encode_cell({ r: 0, c: i })] = { v: h, t: 's', s: getHeaderStyle(i) };
       });
       nextRow = 1;
     }
 
-    const d = extracted;
-    const rowData = [
-      null,               // Job # — blank
-      d.client,
-      d.contact,
-      d.location,
-      d.city,
-      d.description,
-      d.contractValue !== '' ? d.contractValue : null,
-      d.accMgr,
-      null,               // Site Superintendent — blank
-      d.estimator,
-      d.awardDate ? new Date(d.awardDate) : null,
-      null,               // Notes — blank
-      d.email,
-      d.phone
-    ];
-
-    rowData.forEach((val, i) => {
-      if (val === null || val === undefined || val === '') return;
-      const ref = XLSX.utils.encode_cell({r: nextRow, c: i});
-      if (typeof val === 'number') ws[ref] = {v: val, t:'n', z:'"$"#,##0.00'};
-      else if (val instanceof Date) ws[ref] = {v: val, t:'d', z:'MM/DD/YYYY'};
-      else ws[ref] = {v: val, t:'s'};
-    });
+    // Write one row per extracted PDF
+    for (const d of validEntries) {
+      const rowData = [
+        null, d.client, d.contact, d.location, d.city, d.description,
+        d.contractValue !== '' ? d.contractValue : null,
+        d.accMgr, null, d.estimator,
+        d.awardDate ? new Date(d.awardDate) : null,
+        null, d.email, d.phone
+      ];
+      rowData.forEach((val, i) => {
+        if (val === null || val === undefined || val === '') return;
+        const ref = XLSX.utils.encode_cell({r: nextRow, c: i});
+        if (typeof val === 'number') ws[ref] = {v: val, t:'n', z:'"$"#,##0.00'};
+        else if (val instanceof Date) ws[ref] = {v: val, t:'d', z:'MM/DD/YYYY'};
+        else ws[ref] = {v: val, t:'s'};
+      });
+      nextRow++;
+    }
 
     const existingRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    existingRange.e.r = Math.max(existingRange.e.r, nextRow);
+    existingRange.e.r = Math.max(existingRange.e.r, nextRow - 1);
     existingRange.e.c = Math.max(existingRange.e.c, headers.length - 1);
     ws['!ref'] = XLSX.utils.encode_range(existingRange);
 
@@ -562,7 +606,7 @@ async function generate() {
 
     if (!xlsxFile) XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
 
-    const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const out = XLSX.write(wb, {bookType:'xlsx', type:'array', cellStyles: true});
     const blob = new Blob([out], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -573,27 +617,12 @@ async function generate() {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-    setStatus('✓ Scorecard downloaded successfully', 'ok');
+    setStatus(`✓ ${validEntries.length} row${validEntries.length > 1 ? 's' : ''} added — scorecard downloaded`, 'ok');
   } catch(e) {
     setStatus('Error: ' + e.message, 'err');
   }
 
   document.getElementById('btn-generate').disabled = false;
-}
-
-function clearAll() {
-  pdfFile = null; xlsxFile = null; extracted = null;
-  ['pdf','xlsx'].forEach(t => {
-    document.getElementById('zone-'+t).classList.remove('has-file','drag-over');
-    document.getElementById('card-'+t).classList.remove('active','done');
-    const nm = document.getElementById(t+'-name');
-    nm.textContent = ''; nm.style.display = 'none';
-    document.getElementById('inp-'+t).value = '';
-  });
-  document.getElementById('preview-panel').style.display = 'none';
-  document.getElementById('btn-generate').disabled = true;
-  document.getElementById('btn-clear').style.display = 'none';
-  setStatus('', '');
 }
 
 function setStatus(msg, type) {
