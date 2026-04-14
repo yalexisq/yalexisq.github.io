@@ -500,14 +500,22 @@ async function generate() {
       const buf = await xlsxFile.arrayBuffer();
       wb = XLSX.read(buf, { type: 'array', cellDates: true });
       ws = wb.Sheets[wb.SheetNames[0]];
-      // Re-apply header styles to existing sheet's row 1
+      // Find true last non-empty row FIRST before touching anything
+      let lastRow = 0;
+      Object.keys(ws).forEach(key => {
+        if (key[0] === '!') return;
+        try {
+          const r = XLSX.utils.decode_cell(key).r;
+          if (r > lastRow) lastRow = r;
+        } catch(e) {}
+      });
+      nextRow = lastRow + 1;
+      // Now re-apply header styles
       headers.forEach((h, i) => {
         const ref = XLSX.utils.encode_cell({ r: 0, c: i });
         if (!ws[ref]) ws[ref] = { v: h, t: 's' };
         ws[ref].s = headerStyle;
       });
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      nextRow = range.e.r + 1;
     } else {
       wb = XLSX.utils.book_new();
       ws = {};
