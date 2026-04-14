@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scorecard Populator — Forest Contractors</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0f0f;
+    --bg2: #161616;
+    --bg3: #1e1e1e;
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.14);
+    --text: #f0ede6;
+    --text2: #8a8780;
+    --text3: #555;
+    --accent: #e8c547;
+    --accent2: #c9a82e;
+    --success: #4caf82;
+    --danger: #e05a5a;
+    --font-display: 'Sora', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+    --radius: 10px;
+    --radius-lg: 16px;
+  }
+
+  html { background: var(--bg); color: var(--text); font-family: var(--font-display); }
+  body { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+
+  /* HEADER */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 1.25rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo-badge {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 600; color: #000; letter-spacing: -1px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 14px; font-weight: 500; letter-spacing: 0.01em; }
+  header span { font-size: 12px; color: var(--text2); font-family: var(--font-mono); margin-left: auto; }
+
+  /* MAIN */
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 3rem 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    align-content: start;
+  }
+
+  .hero {
+    grid-column: 1 / -1;
+    margin-bottom: 0.5rem;
+  }
+  .hero h2 {
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .hero h2 strong { font-weight: 600; color: var(--accent); }
+  .hero p {
+    margin-top: 0.6rem;
+    font-size: 13px;
+    color: var(--text2);
+    line-height: 1.6;
+    max-width: 480px;
+  }
+
+  /* STEP CARDS */
+  .step-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    transition: border-color 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .step-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--border); transition: background 0.3s;
+  }
+  .step-card.active::before { background: var(--accent); }
+  .step-card.done::before { background: var(--success); }
+  .step-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
+  }
+  .step-card h3 { font-size: 14px; font-weight: 500; margin-bottom: 0.3rem; }
+  .step-card p { font-size: 12px; color: var(--text2); line-height: 1.5; margin-bottom: 1.25rem; }
+
+  /* DROP ZONE */
+  .drop-zone {
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius);
+    padding: 1.75rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: transparent;
+    position: relative;
+  }
+  .drop-zone:hover { border-color: var(--accent); background: rgba(232,197,71,0.03); }
+  .drop-zone.drag-over { border-color: var(--accent); background: rgba(232,197,71,0.06); }
+  .drop-zone.has-file { border-color: var(--success); border-style: solid; background: rgba(76,175,130,0.04); }
+  .drop-icon { font-size: 24px; display: block; margin-bottom: 8px; }
+  .drop-main { font-size: 13px; font-weight: 500; color: var(--text); }
+  .drop-sub { font-size: 11px; color: var(--text2); margin-top: 4px; }
+  .drop-file { font-size: 12px; color: var(--success); margin-top: 8px; font-family: var(--font-mono); }
+  input[type=file] { display: none; }
+
+  /* PREVIEW PANEL */
+  .preview-panel {
+    grid-column: 1 / -1;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: none;
+    animation: fadeUp 0.3s ease;
+  }
+  @keyframes fadeUp { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+  .preview-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg3);
+  }
+  .preview-header h4 { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text2); }
+  .badge { font-family: var(--font-mono); font-size: 10px; padding: 3px 8px; border-radius: 4px; }
+  .badge-ok { background: rgba(76,175,130,0.15); color: var(--success); }
+  .badge-warn { background: rgba(232,197,71,0.12); color: var(--accent); }
+  .fields-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+  }
+  .field-item {
+    padding: 1rem 1.5rem;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .field-item:nth-child(3n) { border-right: none; }
+  .field-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); margin-bottom: 5px; }
+  .field-value { font-size: 13px; color: var(--text); font-family: var(--font-mono); word-break: break-all; }
+  .field-value.empty { color: var(--text3); font-style: italic; font-family: var(--font-display); font-size: 12px; }
+  .field-value.currency::before { content: '$'; color: var(--accent); margin-right: 2px; }
+
+  /* GENERATE SECTION */
+  .generate-bar {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .btn-generate {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 24px;
+    background: var(--accent);
+    color: #000;
+    border: none; border-radius: var(--radius);
+    font-family: var(--font-display);
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    letter-spacing: 0.01em;
+  }
+  .btn-generate:hover { background: var(--accent2); }
+  .btn-generate:active { transform: scale(0.98); }
+  .btn-generate:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+  .btn-secondary {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 12px 20px;
+    background: transparent;
+    color: var(--text2);
+    border: 1px solid var(--border2); border-radius: var(--radius);
+    font-family: var(--font-display);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-secondary:hover { border-color: var(--border2); color: var(--text); }
+  .status-msg {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 8px 14px;
+    border-radius: 6px;
+    display: none;
+  }
+  .status-msg.ok { background: rgba(76,175,130,0.12); color: var(--success); display: block; }
+  .status-msg.err { background: rgba(224,90,90,0.12); color: var(--danger); display: block; }
+  .status-msg.info { background: rgba(232,197,71,0.1); color: var(--accent); display: block; }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 1rem 2rem;
+    font-size: 11px;
+    color: var(--text3);
+    font-family: var(--font-mono);
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  footer span { margin-left: auto; }
+
+  /* SPINNER */
+  .spin { display: inline-block; animation: rotate 0.7s linear infinite; }
+  @keyframes rotate { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    main { grid-template-columns: 1fr; padding: 1.5rem 1rem; }
+    .hero { grid-column: 1; }
+    .generate-bar { grid-column: 1; }
+    .fields-grid { grid-template-columns: 1fr 1fr; }
+    .field-item:nth-child(3n) { border-right: 1px solid var(--border); }
+    .field-item:nth-child(2n) { border-right: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-badge">FC</div>
+  <h1>Scorecard Populator</h1>
+  <span>Forest Contractors</span>
+</header>
+
+<main>
+  <div class="hero">
+    <h2>Turn estimates into<br><strong>scorecard rows</strong> instantly.</h2>
+    <p>Upload an Estimate Information PDF and optionally an existing scorecard to append a new row — no copy-pasting required.</p>
+  </div>
+
+  <!-- Step 1 -->
+  <div class="step-card" id="card-pdf">
+    <div class="step-num">Step 01 — Required</div>
+    <h3>Estimate PDF</h3>
+    <p>Upload the Estimate Information PDF exported from your estimating system.</p>
+    <div class="drop-zone" id="zone-pdf" onclick="document.getElementById('inp-pdf').click()">
+      <span class="drop-icon">📄</span>
+      <div class="drop-main">Drop PDF here or click to browse</div>
+      <div class="drop-sub">Estimate Information format</div>
+      <div class="drop-file" id="pdf-name" style="display:none"></div>
+    </div>
+    <input type="file" id="inp-pdf" accept=".pdf">
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step-card" id="card-xlsx">
+    <div class="step-num">Step 02 — Optional</div>
+    <h3>Existing Scorecard</h3>
+    <p>To append to an existing scorecard, upload it here. The new row will be added below the last entry.</p>
+    <div class="drop-zone" id="zone-xlsx" onclick="document.getElementById('inp-xlsx').click()">
+      <span class="drop-icon">📊</span>
+      <div class="drop-main">Drop .xlsx here or click to browse</div>
+      <div class="drop-sub">Leave empty to create a fresh scorecard</div>
+      <div class="drop-file" id="xlsx-name" style="display:none"></div>
+    </div>
+    <input type="file" id="inp-xlsx" accept=".xlsx,.xls">
+  </div>
+
+  <!-- Preview -->
+  <div class="preview-panel" id="preview-panel">
+    <div class="preview-header">
+      <h4>Extracted Fields — Preview</h4>
+      <span class="badge badge-ok" id="field-count"></span>
+    </div>
+    <div class="fields-grid" id="fields-grid"></div>
+  </div>
+
+  <!-- Generate -->
+  <div class="generate-bar">
+    <button class="btn-generate" id="btn-generate" disabled onclick="generate()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M9 4l4 4-4 4" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Generate Scorecard
+    </button>
+    <button class="btn-secondary" id="btn-clear" onclick="clearAll()" style="display:none">
+      Clear all
+    </button>
+    <div class="status-msg" id="status"></div>
+  </div>
+</main>
+
+<footer>
+  All processing happens in your browser — no data is sent anywhere.
+  <span>pdf.js · SheetJS</span>
+</footer>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let pdfFile = null, xlsxFile = null, extracted = null;
+
+/* ── drag/drop ── */
+['pdf','xlsx'].forEach(type => {
+  const zone = document.getElementById('zone-' + type);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) (type === 'pdf' ? handlePdf : handleXlsx)(f);
+  });
+});
+
+document.getElementById('inp-pdf').addEventListener('change', e => { if (e.target.files[0]) handlePdf(e.target.files[0]); });
+document.getElementById('inp-xlsx').addEventListener('change', e => { if (e.target.files[0]) handleXlsx(e.target.files[0]); });
+
+function handlePdf(f) {
+  if (!f.name.toLowerCase().endsWith('.pdf')) { setStatus('Please upload a .pdf file', 'err'); return; }
+  pdfFile = f;
+  const zone = document.getElementById('zone-pdf');
+  const card = document.getElementById('card-pdf');
+  zone.classList.add('has-file');
+  const nm = document.getElementById('pdf-name');
+  nm.textContent = '✓ ' + f.name; nm.style.display = '';
+  card.classList.add('active');
+  setStatus('Reading PDF…', 'info');
+  parsePdf(f);
+}
+
+function handleXlsx(f) {
+  xlsxFile = f;
+  const zone = document.getElementById('zone-xlsx');
+  const card = document.getElementById('card-xlsx');
+  zone.classList.add('has-file');
+  card.classList.add('done');
+  const nm = document.getElementById('xlsx-name');
+  nm.textContent = '✓ ' + f.name; nm.style.display = '';
+}
+
+async function parsePdf(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      // Group items by Y position (rounded), sort each row left-to-right by X,
+      // then join rows top-to-bottom. This matches how pdfplumber sees the document.
+      const byY = {};
+      tc.items.forEach(item => {
+        const y = Math.round(item.transform[5]);
+        if (!byY[y]) byY[y] = [];
+        byY[y].push({ x: item.transform[4], str: item.str });
+      });
+      // PDF Y coords increase upward, so sort descending = top-to-bottom
+      const ys = Object.keys(byY).map(Number).sort((a, b) => b - a);
+      ys.forEach(y => {
+        const row = byY[y].sort((a, b) => a.x - b.x).map(i => i.str).join(' ').trim();
+        if (row) text += row + '\n';
+      });
+    }
+    extracted = extractFields(text);
+    renderPreview(extracted);
+    document.getElementById('card-pdf').classList.remove('active');
+    document.getElementById('card-pdf').classList.add('done');
+    document.getElementById('btn-generate').disabled = false;
+    document.getElementById('btn-clear').style.display = '';
+    const filled = Object.values(extracted).filter(v => v !== '' && v !== null).length;
+    setStatus('PDF parsed — ' + filled + ' of 11 fields extracted', 'ok');
+  } catch(e) {
+    setStatus('Could not parse PDF: ' + e.message, 'err');
+  }
+}
+
+function extractFields(text) {
+  // Scope each field to the correct section of the document.
+  // The PDF has a two-column header table (y=175-254) where labels and values
+  // share the same Y row — e.g. "Estimator: Polly Yip Phone: 416.874.5900".
+  // We avoid that area entirely by pulling from the clean single-column sections below.
+
+  const getBlock = (start, end) => {
+    const m = text.match(new RegExp(start + '\\n([\\s\\S]+?)' + end, 'i'));
+    return m ? m[1] : '';
+  };
+
+  const projBlock = getBlock('Project Information', '(?:User-Defined|\\d{1,2}/\\d{1,2}/\\d{4})');
+  const genBlock  = getBlock('General Information', 'Project Information');
+  const bidBlock  = getBlock('Bid Information',     'General Information');
+  const userBlock = getBlock('User-Defined Fields', '\\d{1,2}/\\d{1,2}/\\d{4}');
+
+  const field = (pattern, src) => {
+    const m = (src || text).match(pattern);
+    return m ? (m[1] || '').trim() : '';
+  };
+
+  // CLIENT — "Primary Customer: Metrolinx"
+  const client = field(/^Primary Customer:\s*(.+)/m, projBlock);
+
+  // CONTACT — "Contact: Jose Gomez Sierra"
+  const contact = field(/^Contact:\s*(.+)/m, projBlock);
+
+  // LOCATION + CITY — "Project Address: 5760 Leslie St, North York, ON"
+  const addrM = projBlock.match(/^Project Address:\s*([^,\n]+),\s*([^,\n]+),/im);
+  const location = addrM ? addrM[1].trim() : '';
+  const city     = addrM ? addrM[2].trim() : '';
+
+  // DESCRIPTION — "Project Name: Old Cummer Go Station - Accessible Parking Improvement"
+  const description = field(/^Project Name:\s*(.+)/m, projBlock);
+
+  // CONTRACT $ — "Projected Value: $27,575.87"
+  const valM = projBlock.match(/Projected Value:\s*\$?([\d,]+\.?\d*)/i);
+  const contractValue = valM ? parseFloat(valM[1].replace(/,/g, '')) : '';
+
+  // ACC MGR — "Bid As: Claudio Sarracini (Account Manager)" → strip the parenthetical
+  const accMgr = field(/^Bid As:\s*([^(\n]+)/m, genBlock).trim();
+
+  // ESTIMATOR / CA — "Estimator: Polly Yip" (from General block, not the header row)
+  const estimator = field(/^Estimator:\s*(.+)/m, genBlock);
+
+  // AWARD DATE — "Status Changed: 4/10/2026 by PY"
+  const awardM = bidBlock.match(/Status Changed:\s*(\d+\/\d+\/\d+)/i);
+  const awardDate = awardM ? awardM[1] : '';
+
+  // EMAIL — "01. Client Email Address: jose.GomezSierra@metrolinx.com"
+  const email = field(/Client Email Address:\s*(\S+)/i, userBlock);
+
+  // PHONE — "Estimator: Polly Yip Phone: 416.874.5900" in header area
+  // Safe to search full text since format is distinct
+  const phoneM = text.match(/Phone:\s*([\d.()\- ]{7,20})/i);
+  const phone = phoneM ? phoneM[1].trim() : '';
+
+  return { client, contact, location, city, description, contractValue, accMgr, estimator, awardDate, email, phone };
+}
+
+const FIELD_LABELS = {
+  client: 'CLIENT',
+  contact: 'CONTACT',
+  location: 'LOCATION',
+  city: 'CITY',
+  description: 'DESCRIPTION',
+  contractValue: 'CONTRACT $',
+  accMgr: 'ACC MGR',
+  estimator: 'CONTRACT MANAGER (CA)',
+  awardDate: 'AWARD DATE',
+  email: 'CONTACT EMAIL',
+  phone: 'CONTACT PHONE'
+};
+
+function renderPreview(data) {
+  const grid = document.getElementById('fields-grid');
+  const filled = Object.values(data).filter(v => v !== '' && v !== null).length;
+  document.getElementById('field-count').textContent = filled + ' fields extracted';
+  grid.innerHTML = Object.entries(FIELD_LABELS).map(([k, label]) => {
+    const val = data[k];
+    const isEmpty = val === '' || val === null || val === undefined;
+    const isCurrency = k === 'contractValue';
+    return `<div class="field-item">
+      <div class="field-label">${label}</div>
+      <div class="field-value ${isEmpty ? 'empty' : ''} ${isCurrency && !isEmpty ? 'currency' : ''}">
+        ${isEmpty ? 'not found' : (isCurrency ? Number(val).toLocaleString('en-CA', {minimumFractionDigits:2, maximumFractionDigits:2}) : val)}
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('preview-panel').style.display = '';
+}
+
+async function generate() {
+  if (!extracted) return;
+  document.getElementById('btn-generate').disabled = true;
+  setStatus('<span class="spin">⟳</span> Building Excel file…', 'info');
+
+  try {
+    const headers = ['Job #','CLIENT','CONTACT','LOCATION','CITY','DESCRIPTION','CONTRACT $','ACC MGR','Site Superintendent (PM)','CONTRACT MANAGER (CA)','AWARD DATE','NOTES','Contact E-mail','Contact Phone #'];
+    let wb, ws, nextRow;
+
+    const headerStyle = {
+      font:  { bold: true, color: { rgb: '000000' } },
+      fill:  { fgColor: { rgb: 'BDD7EE' } },
+      alignment: { horizontal: 'center', vertical: 'center' }
+    };
+
+    if (xlsxFile) {
+      const buf = await xlsxFile.arrayBuffer();
+      wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      ws = wb.Sheets[wb.SheetNames[0]];
+      // Re-apply header styles to existing sheet's row 1
+      headers.forEach((h, i) => {
+        const ref = XLSX.utils.encode_cell({ r: 0, c: i });
+        if (!ws[ref]) ws[ref] = { v: h, t: 's' };
+        ws[ref].s = headerStyle;
+      });
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      nextRow = range.e.r + 2;
+    } else {
+      wb = XLSX.utils.book_new();
+      ws = {};
+      headers.forEach((h, i) => {
+        ws[XLSX.utils.encode_cell({ r: 0, c: i })] = { v: h, t: 's', s: headerStyle };
+      });
+      nextRow = 1;
+    }
+
+    const d = extracted;
+    const rowData = [
+      null,               // Job # — blank
+      d.client,
+      d.contact,
+      d.location,
+      d.city,
+      d.description,
+      d.contractValue !== '' ? d.contractValue : null,
+      d.accMgr,
+      null,               // Site Superintendent — blank
+      d.estimator,
+      d.awardDate ? new Date(d.awardDate) : null,
+      null,               // Notes — blank
+      d.email,
+      d.phone
+    ];
+
+    rowData.forEach((val, i) => {
+      if (val === null || val === undefined || val === '') return;
+      const ref = XLSX.utils.encode_cell({r: nextRow, c: i});
+      if (typeof val === 'number') ws[ref] = {v: val, t:'n', z:'"$"#,##0.00'};
+      else if (val instanceof Date) ws[ref] = {v: val, t:'d', z:'MM/DD/YYYY'};
+      else ws[ref] = {v: val, t:'s'};
+    });
+
+    const existingRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    existingRange.e.r = Math.max(existingRange.e.r, nextRow);
+    existingRange.e.c = Math.max(existingRange.e.c, headers.length - 1);
+    ws['!ref'] = XLSX.utils.encode_range(existingRange);
+
+    if (!ws['!cols']) {
+      ws['!cols'] = [{wch:12},{wch:20},{wch:28},{wch:22},{wch:14},{wch:34},{wch:16},{wch:22},{wch:22},{wch:22},{wch:14},{wch:14},{wch:36},{wch:18}];
+    }
+
+    if (!xlsxFile) XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+
+    const out = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+    const blob = new Blob([out], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = xlsxFile ? xlsxFile.name.replace(/\.xlsx?$/i,'') + '_updated.xlsx' : 'Scorecard.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    setStatus('✓ Scorecard downloaded successfully', 'ok');
+  } catch(e) {
+    setStatus('Error: ' + e.message, 'err');
+  }
+
+  document.getElementById('btn-generate').disabled = false;
+}
+
+function clearAll() {
+  pdfFile = null; xlsxFile = null; extracted = null;
+  ['pdf','xlsx'].forEach(t => {
+    document.getElementById('zone-'+t).classList.remove('has-file','drag-over');
+    document.getElementById('card-'+t).classList.remove('active','done');
+    const nm = document.getElementById(t+'-name');
+    nm.textContent = ''; nm.style.display = 'none';
+    document.getElementById('inp-'+t).value = '';
+  });
+  document.getElementById('preview-panel').style.display = 'none';
+  document.getElementById('btn-generate').disabled = true;
+  document.getElementById('btn-clear').style.display = 'none';
+  setStatus('', '');
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.innerHTML = msg;
+  el.className = 'status-msg' + (type ? ' '+type : '');
+}
+</script>
+</body>
+</html>
